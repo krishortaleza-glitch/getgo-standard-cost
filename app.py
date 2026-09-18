@@ -3,15 +3,25 @@ import io
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title='GetGo – Promo Cost', layout='wide')
+st.set_page_config(page_title='GetGo – Standard Cost', layout='wide')
+
 BASE = Path(__file__).resolve().parent
 ALIASES_FILE = BASE / 'VendorAliases.xlsx'
 
 
 def read_file(upload):
     if upload.name.lower().endswith('.csv'):
-        return pd.read_csv(upload, dtype='string', keep_default_na=False)
-    return pd.read_excel(upload, dtype='string', keep_default_na=False)
+        return pd.read_csv(
+            upload,
+            dtype='string',
+            keep_default_na=False
+        )
+
+    return pd.read_excel(
+        upload,
+        dtype='string',
+        keep_default_na=False
+    )
 
 
 def clean(s):
@@ -20,45 +30,76 @@ def clean(s):
 
 def col(df, letter):
     n = 0
+
     for ch in letter.upper():
         n = n * 26 + ord(ch) - 64
+
     return clean(df.iloc[:, n - 1])
 
 
 def key(*parts):
     out = parts[0]
+
     for part in parts[1:]:
         out = out + part
+
     return clean(out)
 
 
 def process(cost, raw, aliases):
-    # Vendor Aliases: C + ' ' + D + A
+
+    # ---------------------------------------------------------
+    # VENDOR ALIASES
+    # Key: C + ' ' + D + A
+    # ---------------------------------------------------------
+
     aliases = aliases.copy()
+
     aliases['_alias_key'] = key(
         col(aliases, 'C'),
-        pd.Series(' ', index=aliases.index, dtype='string'),
+        pd.Series(
+            ' ',
+            index=aliases.index,
+            dtype='string'
+        ),
         col(aliases, 'D'),
         col(aliases, 'A')
     )
 
-    # Raw key 1: D + ' ' + F + ' ' + E + A
+    # ---------------------------------------------------------
+    # RAW FILE KEY 1
+    # Key: D + ' ' + F + ' ' + E + A
+    # ---------------------------------------------------------
+
     raw = raw.copy()
+
     raw['_raw_key1'] = key(
         col(raw, 'D'),
-        pd.Series(' ', index=raw.index, dtype='string'),
+        pd.Series(
+            ' ',
+            index=raw.index,
+            dtype='string'
+        ),
         col(raw, 'F'),
-        pd.Series(' ', index=raw.index, dtype='string'),
+        pd.Series(
+            ' ',
+            index=raw.index,
+            dtype='string'
+        ),
         col(raw, 'E'),
         col(raw, 'A')
     )
 
-    # Link raw key 1 to aliases key.
-    # Raw vendor zone + vendor group is expected
-    # to correspond to the aliases Vendor Zone value.
-    alias_map = aliases.drop_duplicates('_alias_key', keep='first').set_index('_alias_key')
+    # ---------------------------------------------------------
+    # LINK RAW KEY 1 TO VENDOR ALIASES
+    # ---------------------------------------------------------
 
-    # Map using positional Excel columns.
+    alias_map = (
+        aliases
+        .drop_duplicates('_alias_key', keep='first')
+        .set_index('_alias_key')
+    )
+
     alias_values = pd.Series(
         col(aliases, 'E').to_numpy(dtype=object),
         index=aliases['_alias_key']
@@ -91,23 +132,37 @@ def process(cost, raw, aliases):
         .astype('string')
     )
 
-    # Raw key 2: alias + raw Column O + cost zone
+    # ---------------------------------------------------------
+    # RAW KEY 2
+    # Key: Alias + Raw Column O + Cost Zone
+    # ---------------------------------------------------------
+
     raw['_raw_key2'] = key(
         raw['_alias'],
         col(raw, 'O'),
         raw['_cost_zone']
     )
 
-    # Cost key: B + G + L
+    # ---------------------------------------------------------
+    # COST FILE KEY
+    # Key: B + G + L
+    # ---------------------------------------------------------
+
     cost = cost.copy()
+
     cost['_cost_key'] = key(
         col(cost, 'B'),
         col(cost, 'G'),
         col(cost, 'L')
     )
 
-    # Match against Raw Column N internally.
-    # This is still used for the lookup, but will NOT populate Output Column O.
+    # ---------------------------------------------------------
+    # MATCH RAW KEY 2 TO COST KEY
+    #
+    # Raw Column N is still used internally for the lookup.
+    # It is NOT written to Output Column O.
+    # ---------------------------------------------------------
+
     raw_values = pd.Series(
         col(raw, 'N').to_numpy(dtype=object),
         index=raw['_raw_key2']
@@ -124,16 +179,9 @@ def process(cost, raw, aliases):
     # ---------------------------------------------------------
     # OUTPUT COLUMN M <- RAW COLUMN K
     # ---------------------------------------------------------
+
     output_m = 12  # Excel Column M, zero-based
 
-    raw_column_k = pd.Series(
-        col(raw, 'K').to_numpy(dtype=object),
-        index=raw.index,
-        dtype=object
-    )
-
-    # Match Raw Column K using the same row-level lookup
-    # established by the raw key.
     raw_k_values = pd.Series(
         col(raw, 'K').to_numpy(dtype=object),
         index=raw['_raw_key2']
@@ -147,7 +195,10 @@ def process(cost, raw, aliases):
 
     if result.shape[1] > output_m:
         result.iloc[:, output_m] = pd.Series(
-            matched_column_m.fillna('').astype(object).to_numpy(),
+            matched_column_m
+            .fillna('')
+            .astype(object)
+            .to_numpy(),
             index=result.index,
             dtype=object
         )
@@ -155,15 +206,27 @@ def process(cost, raw, aliases):
     # ---------------------------------------------------------
     # OUTPUT COLUMN O <- BLANK
     # ---------------------------------------------------------
+
     output_o = 14  # Excel Column O, zero-based
 
     if result.shape[1] > output_o:
         result.iloc[:, output_o] = ''
 
-    # Remove Excel Column T from the output file, if it exists.
-    # Column T is the 20th column, so its zero-based index is 19.
+    # ---------------------------------------------------------
+    # REMOVE EXCEL COLUMN T
+    # ---------------------------------------------------------
+
+    # Column T is the 20th column,
+    # so its zero-based index is 19.
+
     if result.shape[1] > 19:
-        result = result.drop(columns=result.columns[19])
+        result = result.drop(
+            columns=result.columns[19]
+        )
+
+    # ---------------------------------------------------------
+    # STATS
+    # ---------------------------------------------------------
 
     stats = {
         'cost_rows': len(cost),
@@ -171,13 +234,28 @@ def process(cost, raw, aliases):
         'alias_rows': len(aliases),
         'matched': int(matched.notna().sum()),
         'unmatched': int(matched.isna().sum()),
-        'alias_unmatched': int((raw['_alias'] == '').sum()),
-        'column_m_matched': int(matched_column_m.notna().sum()),
-        'column_m_unmatched': int(matched_column_m.isna().sum()),
+        'alias_unmatched': int(
+            (raw['_alias'] == '').sum()
+        ),
+        'column_m_matched': int(
+            matched_column_m.notna().sum()
+        ),
+        'column_m_unmatched': int(
+            matched_column_m.isna().sum()
+        ),
     }
 
+    # ---------------------------------------------------------
+    # DIAGNOSTICS
+    # ---------------------------------------------------------
+
     diagnostics = raw[
-        ['_raw_key1', '_alias', '_cost_zone', '_raw_key2']
+        [
+            '_raw_key1',
+            '_alias',
+            '_cost_zone',
+            '_raw_key2'
+        ]
     ].copy()
 
     diagnostics['raw_column_K_source'] = (
@@ -196,31 +274,55 @@ def process(cost, raw, aliases):
 
 
 def excel_bytes(df):
+
     buf = io.BytesIO()
 
-    with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+    with pd.ExcelWriter(
+        buf,
+        engine='openpyxl'
+    ) as writer:
+
         df.to_excel(
             writer,
             index=False,
-            sheet_name='GetGo Promo Cost'
+            sheet_name='GetGo Standard Cost'
         )
 
     return buf.getvalue()
 
 
-st.title('GetGo – Promo Cost')
+# =============================================================
+# STREAMLIT APP
+# =============================================================
+
+st.title('GetGo – Standard Cost')
 
 st.caption(
-    'Populate Cost File Column M from Raw Vendor Store Cost Column K. '
-    'Output Column O is left blank.'
+    'Populate Cost File Column M from Raw Vendor Store Cost '
+    'Column K. Output Column O is left blank.'
 )
 
 
-if not ALIASES_FILE.exists():
-    st.error(f'Missing static file: {ALIASES_FILE.name}')
-else:
-    st.success(f'Static aliases file found: {ALIASES_FILE.name}')
+# =============================================================
+# VENDOR ALIASES CHECK
+# =============================================================
 
+if not ALIASES_FILE.exists():
+
+    st.error(
+        f'Missing static file: {ALIASES_FILE.name}'
+    )
+
+else:
+
+    st.success(
+        f'Static aliases file found: {ALIASES_FILE.name}'
+    )
+
+
+# =============================================================
+# FILE UPLOADERS
+# =============================================================
 
 raw_upload = st.file_uploader(
     'Raw Vendor Store Cost',
@@ -233,8 +335,12 @@ cost_upload = st.file_uploader(
 )
 
 
+# =============================================================
+# PROCESS BUTTON
+# =============================================================
+
 if st.button(
-    'Process GetGo Promo Cost',
+    'Process GetGo Standard Cost',
     type='primary',
     disabled=not (
         raw_upload
@@ -242,8 +348,11 @@ if st.button(
         and ALIASES_FILE.exists()
     )
 ):
+
     try:
+
         raw_df = read_file(raw_upload)
+
         cost_df = read_file(cost_upload)
 
         aliases_df = pd.read_excel(
@@ -259,43 +368,86 @@ if st.button(
         )
 
         st.session_state.result = result
+
         st.session_state.diagnostics = diagnostics
+
         st.session_state.stats = stats
 
-        st.success('Processing completed.')
+        st.success(
+            'Processing completed.'
+        )
 
     except Exception as exc:
+
         st.exception(exc)
 
 
+# =============================================================
+# RESULTS
+# =============================================================
+
 if 'stats' in st.session_state:
+
     s = st.session_state.stats
 
     c1, c2, c3, c4 = st.columns(4)
 
-    c1.metric('Cost rows', s['cost_rows'])
-    c2.metric('Matched', s['matched'])
-    c3.metric('Unmatched', s['unmatched'])
-    c4.metric('Alias unmatched', s['alias_unmatched'])
+    c1.metric(
+        'Cost rows',
+        s['cost_rows']
+    )
 
-    st.subheader('Lookup diagnostics')
+    c2.metric(
+        'Matched',
+        s['matched']
+    )
+
+    c3.metric(
+        'Unmatched',
+        s['unmatched']
+    )
+
+    c4.metric(
+        'Alias unmatched',
+        s['alias_unmatched']
+    )
+
+    # ---------------------------------------------------------
+    # LOOKUP DIAGNOSTICS
+    # ---------------------------------------------------------
+
+    st.subheader(
+        'Lookup diagnostics'
+    )
 
     st.dataframe(
         st.session_state.diagnostics,
         use_container_width=True
     )
 
-    st.subheader('Output preview')
+    # ---------------------------------------------------------
+    # OUTPUT PREVIEW
+    # ---------------------------------------------------------
+
+    st.subheader(
+        'Output preview'
+    )
 
     st.dataframe(
         st.session_state.result.head(100),
         use_container_width=True
     )
 
+    # ---------------------------------------------------------
+    # DOWNLOAD
+    # ---------------------------------------------------------
+
     st.download_button(
-        'Download GetGo Promo Cost',
-        excel_bytes(st.session_state.result),
-        'GetGo_Promo_Cost_Output.xlsx',
+        'Download GetGo Standard Cost',
+        excel_bytes(
+            st.session_state.result
+        ),
+        'GetGo_Standard_Cost_Output.xlsx',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
 
