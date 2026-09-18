@@ -1,4 +1,3 @@
-```python
 from pathlib import Path
 import io
 import pandas as pd
@@ -299,4 +298,4 @@ if 'stats' in st.session_state:
         'GetGo_Promo_Cost_Output.xlsx',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
-```
+
